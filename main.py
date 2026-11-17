@@ -49,4 +49,4 @@ async def on_resumed():
 async def on_connect():
     await push_presence()
 
-client.run(TOKEN, bot=False)
+client.run(TOKEN)
