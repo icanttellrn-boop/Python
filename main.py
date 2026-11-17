@@ -1,65 +1,3 @@
-# language: Python 3.11+, file: badge_farmer.py
-# pip install websockets aiohttp
-# Commands: .farm time | .farm variety | .farm stop | .status
-
-import asyncio, json, time, signal, sys, os
-import aiohttp, websockets
-
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
-TOKEN            = os.environ.get("TOKEN", "")
-PREFIX           = "."
-TIME_GAME        = "Minecraft"
-ROTATE_INTERVAL  = 65
-STATUS           = "online"
-# ──────────────────────────────────────────────────────────────────────────────
-
-GATEWAY  = "wss://gateway.discord.gg/?v=10&encoding=json"
-API_BASE = "https://discord.com/api/v10"
-
-GAMES = [
-    "League of Legends","Valorant","Minecraft","Fortnite","Apex Legends",
-    "Counter-Strike 2","Dota 2","World of Warcraft","Overwatch 2","Rocket League",
-    "Grand Theft Auto V","Rainbow Six Siege","Destiny 2","Path of Exile",
-    "Dead by Daylight","Among Us","Fall Guys","Rust","ARK: Survival Evolved",
-    "7 Days to Die","The Forest","Subnautica","Terraria","Stardew Valley",
-    "RimWorld","Cities: Skylines","Euro Truck Simulator 2","American Truck Simulator",
-    "Farming Simulator 22","Football Manager 2024","Cyberpunk 2077",
-    "Red Dead Redemption 2","Elden Ring","Dark Souls III","Sekiro: Shadows Die Twice",
-    "Monster Hunter: World","Monster Hunter Rise","Devil May Cry 5",
-    "Resident Evil Village","Resident Evil 4","Halo Infinite","Doom Eternal",
-    "Quake Champions","Team Fortress 2","Payday 2","Left 4 Dead 2","Back 4 Blood",
-    "Dying Light 2","Deep Rock Galactic","Helldivers 2","Risk of Rain 2",
-    "Gunfire Reborn","Borderlands 3","The Elder Scrolls Online","Guild Wars 2",
-    "Final Fantasy XIV","Black Desert Online","Lost Ark","New World","Warframe",
-    "Dauntless","Brawlhalla","Smite","Paladins","PUBG: BATTLEGROUNDS",
-    "Call of Duty: Warzone","Escape from Tarkov","Hunt: Showdown","DayZ",
-    "The Witcher 3: Wild Hunt","Gears 5","Naraka: Bladepoint","Super People",
-    "Albion Online","EVE Online","Elite Dangerous","No Man's Sky","Deathloop",
-    "Sifu","Ghostrunner","Control","Alan Wake 2","Hi-Fi Rush","Lies of P",
-    "Armored Core VI","Street Fighter 6","Tekken 8","Mortal Kombat 11",
-    "Dragon Ball FighterZ","Guilty Gear Strive","BlazBlue: Cross Tag Battle",
-    "NBA 2K24","FIFA 23","WWE 2K23","Planet Coaster","Satisfactory",
-    "Factorio","Dyson Sphere Program","Icarus","Valheim","V Rising",
-    "Green Hell","The Long Dark","Subnautica: Below Zero","Grounded",
-    "Core Keeper","Coral Island","Palia","Wayfinder","Throne and Liberty",
-]
-
-# ─── REST ─────────────────────────────────────────────────────────────────────
-async def api(method: str, path: str, body: dict = None):
-    headers = {"Authorization": TOKEN, "Content-Type": "application/json"}
-    async with aiohttp.ClientSession() as s:
-        r = await s.request(method, f"{API_BASE}{path}",
-                            headers=headers,
-                            json=body if body else None)
-        return r
-
-async def send_msg(channel_id: str, content: str):
-    await api("POST", f"/channels/{channel_id}/messages", {"content": content})
-
-async def del_msg(channel_id: str, message_id: str):
-    await api("DELETE", f"/channels/{channel_id}/messages/{message_id}")
-
-# ─── FARMER ───────────────────────────────────────────────────────────────────
 class BadgeFarmer:
     def __init__(self):
         self.ws                  = None
@@ -69,15 +7,18 @@ class BadgeFarmer:
         self.own_id              = None
         self.running             = True
 
-        self.farm_task           = None
-        self.farm_mode           = None
-        self.farm_start          = None
+        # независимые таски
+        self.time_task           = None
+        self.time_start          = None
+
+        self.variety_task        = None
+        self.variety_start       = None
         self.game_index          = 0
         self.games_played        = set()
         self.current_game        = None
 
     # ── payloads ──────────────────────────────────────────────────────────────
-    def _presence(self, game: str | None = None) -> dict:
+    def _presence(self, game=None):
         activities = []
         if game:
             activities = [{
@@ -89,7 +30,7 @@ class BadgeFarmer:
             "status": STATUS, "afk": False
         }}
 
-    def _identify(self) -> dict:
+    def _identify(self):
         return {
             "op": 2,
             "d": {
@@ -127,18 +68,25 @@ class BadgeFarmer:
             await asyncio.sleep(self.heartbeat_interval / 1000)
             await self.ws.send(json.dumps({"op": 1, "d": self.sequence}))
 
-    # ── farm tasks ────────────────────────────────────────────────────────────
+    # ── time task ─────────────────────────────────────────────────────────────
     async def _task_time(self):
-        self.current_game = TIME_GAME
-        await self.ws.send(json.dumps(self._presence(TIME_GAME)))
-        print(f"[farm:time] {TIME_GAME}")
+        # если variety уже крутится — не перебиваем её присутствие
+        if not self.variety_task or self.variety_task.done():
+            self.current_game = TIME_GAME
+            await self.ws.send(json.dumps(self._presence(TIME_GAME)))
+        print(f"[farm:time] tracking started — {TIME_GAME}")
+
         ticks = 0
         while True:
             await asyncio.sleep(60)
             ticks += 1
-            if ticks % 5 == 0:
-                await self.ws.send(json.dumps(self._presence(TIME_GAME)))
+            # отправляем presence только если variety не активна
+            if not self.variety_task or self.variety_task.done():
+                self.current_game = TIME_GAME
+                if ticks % 5 == 0:
+                    await self.ws.send(json.dumps(self._presence(TIME_GAME)))
 
+    # ── variety task ──────────────────────────────────────────────────────────
     async def _task_variety(self):
         print(f"[farm:variety] {len(GAMES)} games queued")
         while True:
@@ -152,13 +100,6 @@ class BadgeFarmer:
                 print(f"[variety] full cycle — {len(self.games_played)} unique")
                 self.game_index = 0
             await asyncio.sleep(ROTATE_INTERVAL)
-
-    def _stop_farm(self):
-        if self.farm_task and not self.farm_task.done():
-            self.farm_task.cancel()
-        self.farm_task    = None
-        self.farm_mode    = None
-        self.current_game = None
 
     # ── commands ──────────────────────────────────────────────────────────────
     async def _handle(self, d: dict):
@@ -176,72 +117,124 @@ class BadgeFarmer:
             return
         cmd = parts[0].lower()
 
-        # ── .farm ─────────────────────────────────────────────────────────────
         if cmd == "farm":
             if len(parts) < 2:
                 await send_msg(channel_id,
-                    "```\n.farm time\n.farm variety\n.farm stop\n```")
+                    "```\n"
+                    ".farm time      — farm Game Time (runs alongside variety)\n"
+                    ".farm variety   — farm Game Variety\n"
+                    ".farm stop      — stop everything\n"
+                    ".farm stop time — stop only time\n"
+                    ".farm stop variety — stop only variety\n"
+                    "```")
                 return
 
             sub = parts[1].lower()
 
+            # ── stop ──────────────────────────────────────────────────────────
             if sub == "stop":
-                self._stop_farm()
-                await self.ws.send(json.dumps(self._presence(None)))
-                await send_msg(channel_id,
-                    "🛑 **Farming stopped.** Presence cleared.")
+                target = parts[2].lower() if len(parts) > 2 else "all"
 
-            elif sub == "time":
-                self._stop_farm()
-                self.farm_mode  = "time"
-                self.farm_start = time.time()
-                self.farm_task  = asyncio.create_task(self._task_time())
+                if target in ("all", "stop"):
+                    if self.time_task and not self.time_task.done():
+                        self.time_task.cancel()
+                    if self.variety_task and not self.variety_task.done():
+                        self.variety_task.cancel()
+                    self.time_task     = None
+                    self.variety_task  = None
+                    self.current_game  = None
+                    await self.ws.send(json.dumps(self._presence(None)))
+                    await send_msg(channel_id,
+                        "🛑 **All farming stopped.** Presence cleared.")
+
+                elif target == "time":
+                    if self.time_task and not self.time_task.done():
+                        self.time_task.cancel()
+                    self.time_task  = None
+                    self.time_start = None
+                    await send_msg(channel_id,
+                        "🛑 **Time farming stopped.** Variety continues.")
+
+                elif target == "variety":
+                    if self.variety_task and not self.variety_task.done():
+                        self.variety_task.cancel()
+                    self.variety_task  = None
+                    self.variety_start = None
+                    # если time ещё идёт — восстанавливаем его presence
+                    if self.time_task and not self.time_task.done():
+                        self.current_game = TIME_GAME
+                        await self.ws.send(json.dumps(self._presence(TIME_GAME)))
+                    else:
+                        await self.ws.send(json.dumps(self._presence(None)))
+                    await send_msg(channel_id,
+                        "🛑 **Variety farming stopped.** Time continues.")
+                return
+
+            # ── time ──────────────────────────────────────────────────────────
+            if sub == "time":
+                if self.time_task and not self.time_task.done():
+                    await send_msg(channel_id,
+                        "⚠️ Time farming already running.")
+                    return
+                self.time_start = time.time()
+                self.time_task  = asyncio.create_task(self._task_time())
+                variety_status  = "running alongside" \
+                    if (self.variety_task and not self.variety_task.done()) \
+                    else "not active"
                 await send_msg(channel_id,
                     f"⚔️ **Game Time farming started.**\n"
-                    f"Game: `{TIME_GAME}` | Status: `{STATUS}`")
+                    f"Game: `{TIME_GAME}` | Variety: `{variety_status}`")
+                return
 
-            elif sub == "variety":
-                self._stop_farm()
-                self.game_index  = 0
+            # ── variety ───────────────────────────────────────────────────────
+            if sub == "variety":
+                if self.variety_task and not self.variety_task.done():
+                    await send_msg(channel_id,
+                        "⚠️ Variety farming already running.")
+                    return
+                self.game_index    = 0
                 self.games_played.clear()
-                self.farm_mode   = "variety"
-                self.farm_start  = time.time()
-                self.farm_task   = asyncio.create_task(self._task_variety())
+                self.variety_start = time.time()
+                self.variety_task  = asyncio.create_task(self._task_variety())
+                time_status = "running" \
+                    if (self.time_task and not self.time_task.done()) \
+                    else "not active"
                 await send_msg(channel_id,
                     f"🎮 **Game Variety farming started.**\n"
                     f"Queue: `{len(GAMES)} games` | "
-                    f"Interval: `{ROTATE_INTERVAL}s/game`")
-
-            else:
-                await send_msg(channel_id,
-                    f"❓ Unknown: `{sub}`. Use `time`, `variety`, `stop`.")
-
-        # ── .status ───────────────────────────────────────────────────────────
-        elif cmd == "status":
-            if not self.farm_mode:
-                await send_msg(channel_id, "💤 **Idle.** Nothing running.")
+                    f"Interval: `{ROTATE_INTERVAL}s/game` | "
+                    f"Time farming: `{time_status}`")
                 return
 
-            elapsed = int(time.time() - self.farm_start)
-            h = elapsed // 3600
-            m = (elapsed % 3600) // 60
-            s = elapsed % 60
+            await send_msg(channel_id,
+                f"❓ Unknown: `{sub}`")
 
-            if self.farm_mode == "time":
-                await send_msg(channel_id,
-                    f"**📊 Farm Status**\n"
-                    f"Mode: `TIME`\n"
-                    f"Game: `{self.current_game}`\n"
-                    f"Uptime: `{h:02d}:{m:02d}:{s:02d}`")
+        elif cmd == "status":
+            lines = ["**📊 Farm Status**"]
 
-            elif self.farm_mode == "variety":
-                await send_msg(channel_id,
-                    f"**📊 Farm Status**\n"
-                    f"Mode: `VARIETY`\n"
-                    f"Current: `{self.current_game}`\n"
-                    f"Progress: `{self.game_index % len(GAMES)}/{len(GAMES)}`\n"
-                    f"Unique sent: `{len(self.games_played)}`\n"
-                    f"Uptime: `{h:02d}:{m:02d}:{s:02d}`")
+            # time
+            if self.time_task and not self.time_task.done():
+                e = int(time.time() - self.time_start)
+                h, m, s = e//3600, (e%3600)//60, e%60
+                lines.append(f"⚔️ Time: `{TIME_GAME}` | `{h:02d}:{m:02d}:{s:02d}`")
+            else:
+                lines.append("⚔️ Time: `idle`")
+
+            # variety
+            if self.variety_task and not self.variety_task.done():
+                e = int(time.time() - self.variety_start)
+                h, m, s = e//3600, (e%3600)//60, e%60
+                prog = self.game_index % len(GAMES)
+                lines.append(
+                    f"🎮 Variety: `{self.current_game}` | "
+                    f"`{prog}/{len(GAMES)}` | "
+                    f"Unique: `{len(self.games_played)}` | "
+                    f"`{h:02d}:{m:02d}:{s:02d}`"
+                )
+            else:
+                lines.append("🎮 Variety: `idle`")
+
+            await send_msg(channel_id, "\n".join(lines))
 
     # ── gateway loop ──────────────────────────────────────────────────────────
     async def run(self):
@@ -276,10 +269,9 @@ class BadgeFarmer:
                     msg = json.loads(raw)
                     if msg.get("s"):
                         self.sequence = msg["s"]
-
                     op = msg["op"]
                     if op == 7:
-                        print("\n[!] Reconnect requested")
+                        print("\n[!] Reconnect")
                         break
                     if op == 9:
                         print("\n[!] Invalid session")
@@ -287,7 +279,6 @@ class BadgeFarmer:
                         break
                     if op != 0:
                         continue
-
                     if msg.get("t") == "MESSAGE_CREATE":
                         d = msg.get("d", {})
                         if d.get("author", {}).get("id") == self.own_id:
@@ -295,29 +286,3 @@ class BadgeFarmer:
 
             except websockets.ConnectionClosed as e:
                 print(f"\n[!] Closed: {e}")
-
-# ─── ENTRY ────────────────────────────────────────────────────────────────────
-async def main():
-    if not TOKEN:
-        print("[!] TOKEN not set. Add it as environment variable.")
-        sys.exit(1)
-
-    farmer = BadgeFarmer()
-
-    def _stop(*_):
-        print("\n[*] Stopping...")
-        farmer.running = False
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _stop)
-    signal.signal(signal.SIGTERM, _stop)
-
-    while True:
-        try:
-            await farmer.run()
-        except Exception as e:
-            print(f"[!] Error: {e} — reconnect in 10s")
-            await asyncio.sleep(10)
-
-if __name__ == "__main__":
-    asyncio.run(main())
