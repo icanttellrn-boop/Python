@@ -1,9 +1,5 @@
 [phases.install]
-cmds = [
-  "pip install --upgrade pip",
-  "pip uninstall discord discord.py -y 2>/dev/null || true",
-  "pip install --force-reinstall discord.py-self"
-]
+cmds = ["pip install websocket-client"]
 
 [start]
 cmd = "python main.py"
