@@ -2,6 +2,11 @@
 GTA 6 PS5 Rich Presence Selfbot
 No third-party discord lib — pure websocket + REST
 dep: pip install websocket-client
+
+BEFORE RUNNING:
+Paste this URL into any Discord channel and send it — forces cache:
+https://cdn.discordapp.com/attachments/1570240024589377689/1572589309666529431/images.jpg
+Then run the script.
 """
 
 import json
@@ -14,7 +19,9 @@ import websocket
 TOKEN  = os.environ.get("DISCORD_TOKEN", "")
 APP_ID = "1240700149680939090"
 
-_LARGE_IMAGE = "mp:external/https/cdn.discordapp.com/attachments/1570240024589377689/1572589309666529431/images.jpg"
+# Send this URL in any Discord channel first to force the proxy cache
+_CDN   = "cdn.discordapp.com/attachments/1570240024589377689/1572589309666529431/images.jpg"
+_LARGE_IMAGE = f"mp:external/{_CDN}"
 
 PRESENCE = {
     "op": 3,
@@ -70,7 +77,7 @@ def on_message(ws: websocket.WebSocketApp, raw: str) -> None:
     if msg.get("s") is not None:
         sequence = msg["s"]
 
-    if op == 10:
+    if op == 10:                                      # Hello
         heartbeat_interval = msg["d"]["heartbeat_interval"]
         threading.Thread(
             target=heartbeat_loop, args=(ws,), daemon=True
@@ -90,16 +97,16 @@ def on_message(ws: websocket.WebSocketApp, raw: str) -> None:
             },
         })
 
-    elif t == "READY":
+    elif t == "READY":                                # Identify ACK
         u = msg["d"]["user"]
         print(f"[+] {u['username']}#{u['discriminator']}")
         send(ws, PRESENCE)
         print("[+] presence live — GTA VI / PlayStation 5")
 
-    elif op == 11:
+    elif op == 11:                                    # Heartbeat ACK
         pass
 
-    elif op in (7, 9):
+    elif op in (7, 9):                                # Reconnect / invalid session
         print(f"[!] op {op} — reconnecting")
         ws.close()
 
