@@ -1,79 +1,138 @@
 """
-GTA 6 PS5 Rich Presence Selfbot — Railway Edition
-===================================================
-deps: pip install discord.py-self
-
-Railway env vars:
-  DISCORD_TOKEN   your user token
-
-Deploy:
-  1. Push this file + requirements.txt to a repo
-  2. New Railway project → Deploy from GitHub
-  3. Set DISCORD_TOKEN in Variables tab
+GTA 6 PS5 Rich Presence Selfbot
+No third-party discord lib — pure websocket + REST
+dep: pip install websocket-client
 """
 
-import asyncio
+import json
 import os
+import sys
 import time
+import threading
+import websocket
+import urllib.request
+import urllib.error
 
-import discord
+TOKEN   = os.environ.get("DISCORD_TOKEN", "")
+APP_ID  = "1240700149680939090"
 
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
+PRESENCE = {
+    "op": 3,
+    "d": {
+        "since": None,
+        "activities": [
+            {
+                "name":             "Grand Theft Auto VI",
+                "type":             0,
+                "application_id":   APP_ID,
+                "details":          "Exploring Vice City",
+                "state":            "PlayStation 5 - Free Roam",
+                "timestamps":       {"start": int(time.time() * 1000)},
+                "assets": {
+                    "large_image":  APP_ID + "/gta6",
+                    "large_text":   "Grand Theft Auto VI",
+                    "small_image":  APP_ID + "/ps5_controller",
+                    "small_text":   "PlayStation 5",
+                },
+            }
+        ],
+        "status": "online",
+        "afk":    False,
+    }
+}
 
-TOKEN    = os.environ.get("DISCORD_TOKEN", "PASTE_YOUR_TOKEN_HERE")
+GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
 
-APP_ID   = 1240700149680939090   # GTA VI Discord application id (int required)
-
-DETAIL = "Exploring Vice City"
-STATE  = "Free Roam"
-
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-class GTA6Bot(discord.Client):
-    def __init__(self):
-        intents = discord.Intents.default()
-        super().__init__(intents=intents)
-        self._start_time = int(time.time())
-
-    async def setup_hook(self):
-        self.loop.create_task(self._set_presence())
-
-    async def on_ready(self):
-        print(f"[+] logged in as {self.user} ({self.user.id})")
-
-    async def _set_presence(self):
-        await self.wait_until_ready()
-
-        activity = discord.Activity(
-            application_id = APP_ID,
-            type           = discord.ActivityType.playing,
-            name           = "Grand Theft Auto VI",
-            details        = DETAIL,
-            state          = f"{PLATFORM} • {STATE}",
-            timestamps     = {"start": self._start_time},
-            assets         = {
-                "large_image": "gta6",
-                "large_text":  "Grand Theft Auto VI",
-                "small_image": "ps5_controller",
-                "small_text":  PLATFORM,
-            },
-        )
-
-        await self.change_presence(
-            status   = discord.Status.online,
-            activity = activity,
-        )
-
-        print(f"[+] presence locked → {DETAIL} | {STATE}")
+heartbeat_interval = None
+sequence           = None
+ws_app             = None
 
 
-PLATFORM = "PlayStation 5"
+def send(ws, payload):
+    ws.send(json.dumps(payload))
+
+
+def heartbeat_loop(ws):
+    while True:
+        time.sleep(heartbeat_interval / 1000)
+        send(ws, {"op": 1, "d": sequence})
+
+
+def on_open(ws):
+    print("[+] connected to gateway")
+
+
+def on_message(ws, raw):
+    global heartbeat_interval, sequence
+
+    msg = json.loads(raw)
+    op  = msg.get("op")
+    t   = msg.get("t")
+
+    if msg.get("s"):
+        sequence = msg["s"]
+
+    # Hello — start heartbeat + identify
+    if op == 10:
+        heartbeat_interval = msg["d"]["heartbeat_interval"]
+        threading.Thread(target=heartbeat_loop, args=(ws,), daemon=True).start()
+
+        # Identify as user (selfbot)
+        send(ws, {
+            "op": 2,
+            "d": {
+                "token":      TOKEN,
+                "intents":    0,
+                "properties": {
+                    "os":      "Windows",
+                    "browser": "Discord Client",
+                    "device":  "Discord Client",
+                },
+                "presence": PRESENCE["d"],
+            }
+        })
+
+    # Ready — set presence
+    elif t == "READY":
+        user = msg["d"]["user"]
+        print(f"[+] logged in as {user['username']}#{user['discriminator']}")
+        send(ws, PRESENCE)
+        print("[+] presence set — GTA VI / PlayStation 5")
+
+    # Heartbeat ACK
+    elif op == 11:
+        pass
+
+    # Reconnect / Invalid session
+    elif op in (7, 9):
+        print(f"[!] op {op} — reconnecting")
+        ws.close()
+
+
+def on_error(ws, error):
+    print(f"[!] error: {error}")
+
+
+def on_close(ws, code, msg):
+    print(f"[!] closed ({code}) — reconnecting in 5s")
+    time.sleep(5)
+    connect()
+
+
+def connect():
+    global ws_app
+    ws_app = websocket.WebSocketApp(
+        GATEWAY,
+        on_open    = on_open,
+        on_message = on_message,
+        on_error   = on_error,
+        on_close   = on_close,
+    )
+    ws_app.run_forever()
 
 
 if __name__ == "__main__":
-    if TOKEN == "PASTE_YOUR_TOKEN_HERE":
-        print("[!] Set the DISCORD_TOKEN environment variable.")
-    else:
-        bot = GTA6Bot()
-        bot.run(TOKEN, bot=False)   # bot=False = user token / selfbot
+    if not TOKEN:
+        print("[!] Set DISCORD_TOKEN env var")
+        sys.exit(1)
+    connect()
