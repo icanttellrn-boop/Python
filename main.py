@@ -5,8 +5,9 @@ import aiohttp
 import asyncio
 import os
 
-TOKEN = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
+TOKEN        = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
 TARGET_HOURS = int(os.environ.get("HOURS", "5000"))
+DELAY        = float(os.environ.get("DELAY", "0.5"))
 
 HEADERS = {
     "Authorization": TOKEN,
@@ -14,59 +15,60 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-APP_ID = "356875221078245376"  # minecraft
+MAX_DURATION   = 1800
+TARGET_SECONDS = TARGET_HOURS * 3600
+REQUESTS_NEEDED = TARGET_SECONDS // MAX_DURATION
 
-# try different duration sizes to find the max
-TEST_DURATIONS = [
-    3600,         # 1h
-    86400,        # 1 day
-    604800,       # 1 week
-    2592000,      # 30 days
-    31536000,     # 1 year
-    2147483647,   # int32 max
-]
-
-BODY_VARIANTS = [
-    lambda d: {"application_id": APP_ID, "duration": d},
-    lambda d: {"application_id": APP_ID, "duration": d, "session_id": "0"},
-    lambda d: {"application_id": APP_ID, "duration": d, "game_name": "Minecraft"},
-    lambda d: {"application_id": int(APP_ID), "duration": d},
-]
-
-async def probe_body():
-    async with aiohttp.ClientSession() as s:
-        print("[~] probing body shape + max duration")
-        for body_fn in BODY_VARIANTS:
-            body = body_fn(3600)
-            async with s.post(
-                "https://discord.com/api/v9/activities",
-                headers=HEADERS, json=body
-            ) as r:
-                txt = (await r.text())[:200]
-                print(f"[{r.status}] {body} => {txt}")
-            await asyncio.sleep(1)
-
-        print("\n[~] probing max duration")
-        for d in TEST_DURATIONS:
-            body = {"application_id": APP_ID, "duration": d}
-            async with s.post(
-                "https://discord.com/api/v9/activities",
-                headers=HEADERS, json=body
-            ) as r:
-                txt = (await r.text())[:200]
-                print(f"[{r.status}] duration={d} => {txt}")
-            await asyncio.sleep(1)
-
-async def check_stats():
+async def fetch_games():
     async with aiohttp.ClientSession() as s:
         async with s.get(
-            "https://discord.com/api/v9/users/@me/activities/statistics/applications",
+            "https://discord.com/api/v10/applications/detectable",
             headers=HEADERS
         ) as r:
-            print(f"\n[stats] {await r.text()}")
+            return await r.json() if r.status == 200 else []
+
+async def send_session(s, app_id, app_name, idx, total):
+    body = {"application_id": app_id, "duration": MAX_DURATION}
+    async with s.post(
+        "https://discord.com/api/v9/activities",
+        headers=HEADERS,
+        json=body
+    ) as r:
+        status = r.status
+        if status not in (200, 201, 204):
+            txt = (await r.text())[:80]
+            if "rate" in txt.lower():
+                print(f"[!] ratelimit hit at {idx} — sleeping 10s")
+                await asyncio.sleep(10)
+                return False
+            print(f"[!] {status} on {app_name}: {txt}")
+        else:
+            if idx % 100 == 0:
+                hours_done = (idx * MAX_DURATION) / 3600
+                print(f"[~] {idx}/{total} | {hours_done:.1f}h done | {app_name}")
+        return True
 
 async def main():
-    await probe_body()
-    await check_stats()
+    print("[+] fetching game list...")
+    games = await fetch_games()
+    if not games:
+        print("[-] failed to fetch games")
+        return
+
+    print(f"[+] {len(games)} games | target: {TARGET_HOURS}h = {REQUESTS_NEEDED} requests")
+
+    async with aiohttp.ClientSession() as s:
+        sent = 0
+        # cycle through games repeatedly until target reached
+        while sent < REQUESTS_NEEDED:
+            for game in games:
+                if sent >= REQUESTS_NEEDED:
+                    break
+                ok = await send_session(s, game["id"], game["name"], sent, REQUESTS_NEEDED)
+                if ok:
+                    sent += 1
+                await asyncio.sleep(DELAY)
+
+    print(f"[+] done — {sent * MAX_DURATION / 3600:.1f}h submitted")
 
 asyncio.run(main())
