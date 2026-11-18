@@ -23,16 +23,14 @@ PRESENCE = {
         "activities": [
             {
                 "name":             "Grand Theft Auto VI",
-                "type":             0,
-                "application_id":   APP_ID,
-                "details":          "Exploring Vice City",
-                "state":            "PlayStation 5 - Free Roam",
+                "type":             1,
+                "url":              "https://www.twitch.tv/playstation",
+                "details":          "Grand Theft Auto VI",
+                "state":            "PlayStation 5",
                 "timestamps":       {"start": int(time.time() * 1000)},
                 "assets": {
-                    "large_image":  "https://i.imgur.com/43bdw9g",
+                    "large_image":  "https://i.imgur.com/43bdw9g.png",
                     "large_text":   "Grand Theft Auto VI",
-                    "small_image":  "https://i.imgur.com/43bdw9g",
-                    "small_text":   "PlayStation 5",
                 },
             }
         ],
