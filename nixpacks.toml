@@ -6,4 +6,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python gta6_selfbot.py"
+cmd = "python main.py"
