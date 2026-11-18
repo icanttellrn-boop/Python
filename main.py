@@ -1,74 +1,79 @@
-# language: Python 3.10+, file: exploit.py
-# pip install aiohttp
+"""
+GTA 6 PS5 Rich Presence Selfbot — Railway Edition
+===================================================
+deps: pip install discord.py-self
 
-import aiohttp
+Railway env vars:
+  DISCORD_TOKEN   your user token
+
+Deploy:
+  1. Push this file + requirements.txt to a repo
+  2. New Railway project → Deploy from GitHub
+  3. Set DISCORD_TOKEN in Variables tab
+"""
+
 import asyncio
 import os
+import time
 
-TOKEN        = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
-TARGET_HOURS = int(os.environ.get("HOURS", "5000"))
-DELAY        = float(os.environ.get("DELAY", "0.5"))
+import discord
 
-HEADERS = {
-    "Authorization": TOKEN,
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-}
+# ─── CONFIG ───────────────────────────────────────────────────────────────────
 
-MAX_DURATION   = 1800
-TARGET_SECONDS = TARGET_HOURS * 3600
-REQUESTS_NEEDED = TARGET_SECONDS // MAX_DURATION
+TOKEN    = os.environ.get("DISCORD_TOKEN", "PASTE_YOUR_TOKEN_HERE")
 
-async def fetch_games():
-    async with aiohttp.ClientSession() as s:
-        async with s.get(
-            "https://discord.com/api/v10/applications/detectable",
-            headers=HEADERS
-        ) as r:
-            return await r.json() if r.status == 200 else []
+APP_ID   = 1240700149680939090   # GTA VI Discord application id (int required)
 
-async def send_session(s, app_id, app_name, idx, total):
-    body = {"application_id": app_id, "duration": MAX_DURATION}
-    async with s.post(
-        "https://discord.com/api/v9/activities",
-        headers=HEADERS,
-        json=body
-    ) as r:
-        status = r.status
-        if status not in (200, 201, 204):
-            txt = (await r.text())[:80]
-            if "rate" in txt.lower():
-                print(f"[!] ratelimit hit at {idx} — sleeping 10s")
-                await asyncio.sleep(10)
-                return False
-            print(f"[!] {status} on {app_name}: {txt}")
-        else:
-            if idx % 100 == 0:
-                hours_done = (idx * MAX_DURATION) / 3600
-                print(f"[~] {idx}/{total} | {hours_done:.1f}h done | {app_name}")
-        return True
+DETAIL = "Exploring Vice City"
+STATE  = "Free Roam"
 
-async def main():
-    print("[+] fetching game list...")
-    games = await fetch_games()
-    if not games:
-        print("[-] failed to fetch games")
-        return
+# ──────────────────────────────────────────────────────────────────────────────
 
-    print(f"[+] {len(games)} games | target: {TARGET_HOURS}h = {REQUESTS_NEEDED} requests")
 
-    async with aiohttp.ClientSession() as s:
-        sent = 0
-        # cycle through games repeatedly until target reached
-        while sent < REQUESTS_NEEDED:
-            for game in games:
-                if sent >= REQUESTS_NEEDED:
-                    break
-                ok = await send_session(s, game["id"], game["name"], sent, REQUESTS_NEEDED)
-                if ok:
-                    sent += 1
-                await asyncio.sleep(DELAY)
+class GTA6Bot(discord.Client):
+    def __init__(self):
+        intents = discord.Intents.default()
+        super().__init__(intents=intents)
+        self._start_time = int(time.time())
 
-    print(f"[+] done — {sent * MAX_DURATION / 3600:.1f}h submitted")
+    async def setup_hook(self):
+        self.loop.create_task(self._set_presence())
 
-asyncio.run(main())
+    async def on_ready(self):
+        print(f"[+] logged in as {self.user} ({self.user.id})")
+
+    async def _set_presence(self):
+        await self.wait_until_ready()
+
+        activity = discord.Activity(
+            application_id = APP_ID,
+            type           = discord.ActivityType.playing,
+            name           = "Grand Theft Auto VI",
+            details        = DETAIL,
+            state          = f"{PLATFORM} • {STATE}",
+            timestamps     = {"start": self._start_time},
+            assets         = {
+                "large_image": "gta6",
+                "large_text":  "Grand Theft Auto VI",
+                "small_image": "ps5_controller",
+                "small_text":  PLATFORM,
+            },
+        )
+
+        await self.change_presence(
+            status   = discord.Status.online,
+            activity = activity,
+        )
+
+        print(f"[+] presence locked → {DETAIL} | {STATE}")
+
+
+PLATFORM = "PlayStation 5"
+
+
+if __name__ == "__main__":
+    if TOKEN == "PASTE_YOUR_TOKEN_HERE":
+        print("[!] Set the DISCORD_TOKEN environment variable.")
+    else:
+        bot = GTA6Bot()
+        bot.run(TOKEN, bot=False)   # bot=False = user token / selfbot
