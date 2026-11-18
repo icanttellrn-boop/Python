@@ -1,115 +1,72 @@
 # language: Python 3.10+, file: exploit.py
-# pip install discord.py-self aiohttp
+# pip install aiohttp
 
-import discord
 import aiohttp
 import asyncio
 import os
-import random
 
-TOKEN      = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
-MODE       = os.environ.get("MODE", "both")   # variety | hours | both
-DELAY      = float(os.environ.get("DELAY", "1.5"))  # seconds between game switches
+TOKEN = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
+HOURS = int(os.environ.get("HOURS", "5000"))
 
-client = discord.Client()
-games_cache = []
+HEADERS = {
+    "Authorization": TOKEN,
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+}
 
-async def fetch_detectable(token):
+async def fetch_detectable():
     async with aiohttp.ClientSession() as s:
         async with s.get(
             "https://discord.com/api/v10/applications/detectable",
-            headers={"Authorization": token}
+            headers=HEADERS
         ) as r:
-            if r.status == 200:
-                return await r.json()
-    return []
+            return await r.json() if r.status == 200 else []
 
-async def set_game(game):
-    try:
-        await client.ws.send_as_json({
-            "op": 3,
-            "d": {
-                "since": None,
-                "activities": [{
-                    "type": 0,
-                    "name": game["name"],
-                    "application_id": game["id"],
-                    "flags": 0,
-                }],
-                "status": "online",
-                "afk": False,
-            }
-        })
-    except Exception as e:
-        print(f"[!] ws error: {e}")
+async def get_current_stats(app_id):
+    async with aiohttp.ClientSession() as s:
+        async with s.get(
+            f"https://discord.com/api/v10/users/@me/applications/{app_id}/stats",
+            headers=HEADERS
+        ) as r:
+            print(f"  GET stats {r.status}: {await r.text()}")
 
-async def clear_presence():
-    try:
-        await client.ws.send_as_json({
-            "op": 3,
-            "d": {
-                "since": None,
-                "activities": [],
-                "status": "online",
-                "afk": False,
-            }
-        })
-    except Exception:
-        pass
-
-async def farm_variety():
-    """cycle every unique game — each transition = 1 game counted"""
-    total = len(games_cache)
-    print(f"[+] variety farm — {total} games to cycle")
-    for i, game in enumerate(games_cache):
-        await set_game(game)
-        await asyncio.sleep(DELAY)
-        await clear_presence()
-        await asyncio.sleep(0.3)
-        if i % 50 == 0:
-            print(f"[~] {i}/{total} — {game['name']}")
-    print("[+] variety cycle done")
-
-async def farm_hours():
-    """loop one game — accumulates time server-side"""
-    if not games_cache:
-        return
-    game = games_cache[0]
-    print(f"[+] hours farm — {game['name']}")
-    while True:
-        await set_game(game)
-        await asyncio.sleep(60)
-
-async def farm_both():
-    """cycle all games for variety, loop back for hours"""
-    total = len(games_cache)
-    print(f"[+] full farm — {total} games")
-    seen = set()
-    while True:
-        for i, game in enumerate(games_cache):
-            await set_game(game)
-            await asyncio.sleep(DELAY)
-            if game["id"] not in seen:
-                seen.add(game["id"])
-                await clear_presence()
+async def try_post_stats(app_id, app_name, duration_seconds):
+    payloads = [
+        {"duration": duration_seconds},
+        {"total_duration": duration_seconds},
+        {"time": duration_seconds},
+        {"playtime": duration_seconds},
+        {"seconds": duration_seconds},
+    ]
+    async with aiohttp.ClientSession() as s:
+        for body in payloads:
+            async with s.post(
+                f"https://discord.com/api/v10/users/@me/applications/{app_id}/stats",
+                headers=HEADERS,
+                json=body
+            ) as r:
+                txt = await r.text()
+                print(f"  POST {app_name} | body={body} | {r.status}: {txt[:80]}")
+                if r.status in (200, 201, 204):
+                    print(f"  [!!] HIT — {body}")
+                    return True
                 await asyncio.sleep(0.3)
-            if i % 100 == 0:
-                print(f"[~] {i}/{total} | unique: {len(seen)}")
+    return False
 
-@client.event
-async def on_ready():
-    global games_cache
-    print(f"[+] {client.user}")
-    games_cache = await fetch_detectable(TOKEN)
-    random.shuffle(games_cache)
-    print(f"[+] loaded {len(games_cache)} detectable games")
+async def main():
+    print("[+] fetching games...")
+    games = await fetch_detectable()
+    if not games:
+        print("[-] no games fetched")
+        return
 
-    if   MODE == "variety": asyncio.ensure_future(farm_variety())
-    elif MODE == "hours":   asyncio.ensure_future(farm_hours())
-    else:                   asyncio.ensure_future(farm_both())
+    duration = HOURS * 3600
+    print(f"[+] {len(games)} games | target: {HOURS}h = {duration}s")
 
-@client.event
-async def on_resumed():
-    print("[~] reconnected")
+    # probe first game to see endpoint structure
+    g = games[0]
+    print(f"\n[~] probing {g['name']} ({g['id']})")
+    await get_current_stats(g["id"])
+    await try_post_stats(g["id"], g["name"], duration)
 
-client.run(TOKEN)
+asyncio.run(main())
