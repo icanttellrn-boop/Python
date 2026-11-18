@@ -1,0 +1,9 @@
+[phases.install]
+cmds = [
+  "pip install --upgrade pip",
+  "pip uninstall discord discord.py -y 2>/dev/null || true",
+  "pip install --force-reinstall discord.py-self"
+]
+
+[start]
+cmd = "python gta6_selfbot.py"
