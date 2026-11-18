@@ -1,4 +1,4 @@
-# language: Python 3.10+, file: exploit.py
+# language: Python 3.10+, file: probe.py
 # pip install aiohttp
 
 import aiohttp
@@ -6,67 +6,56 @@ import asyncio
 import os
 
 TOKEN = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
-HOURS = int(os.environ.get("HOURS", "5000"))
 
 HEADERS = {
     "Authorization": TOKEN,
     "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-async def fetch_detectable():
+APP_ID   = "356875221078245376"  # minecraft
+DURATION = 18000000  # 5000 hours in seconds
+
+ENDPOINTS = [
+    ("GET",   "/api/v9/users/@me/activities/statistics/applications"),
+    ("POST",  "/api/v9/users/@me/activities/statistics/applications"),
+    ("POST",  f"/api/v9/users/@me/activities/statistics/applications/{APP_ID}"),
+    ("PUT",   f"/api/v9/users/@me/activities/statistics/applications/{APP_ID}"),
+    ("PATCH", f"/api/v9/users/@me/activities/statistics/applications/{APP_ID}"),
+    ("POST",  "/api/v9/users/@me/activities"),
+    ("POST",  f"/api/v9/users/@me/applications/{APP_ID}/stats"),
+    ("GET",   f"/api/v9/users/@me/applications/{APP_ID}/stats"),
+    ("POST",  f"/api/v9/applications/{APP_ID}/stats"),
+    ("POST",  "/api/v9/users/@me/game-sessions"),
+    ("POST",  f"/api/v9/users/@me/game-sessions/{APP_ID}"),
+    ("POST",  "/api/v10/users/@me/activities"),
+    ("GET",   "/api/v9/users/@me/activities/statistics/applications"),
+    ("POST",  "/api/v9/activities"),
+]
+
+BODY = {
+    "application_id": APP_ID,
+    "duration": DURATION,
+    "total_duration": DURATION,
+    "sessions": 1,
+}
+
+async def probe():
+    base = "https://discord.com"
     async with aiohttp.ClientSession() as s:
-        async with s.get(
-            "https://discord.com/api/v10/applications/detectable",
-            headers=HEADERS
-        ) as r:
-            return await r.json() if r.status == 200 else []
+        for method, path in ENDPOINTS:
+            try:
+                fn = getattr(s, method.lower())
+                kwargs = {"headers": HEADERS}
+                if method in ("POST", "PUT", "PATCH"):
+                    kwargs["json"] = BODY
+                async with fn(base + path, **kwargs) as r:
+                    txt = (await r.text())[:120]
+                    print(f"[{r.status}] {method} {path}")
+                    if r.status not in (404, 405):
+                        print(f"      >> {txt}")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"[ERR] {method} {path} — {e}")
 
-async def get_current_stats(app_id):
-    async with aiohttp.ClientSession() as s:
-        async with s.get(
-            f"https://discord.com/api/v10/users/@me/applications/{app_id}/stats",
-            headers=HEADERS
-        ) as r:
-            print(f"  GET stats {r.status}: {await r.text()}")
-
-async def try_post_stats(app_id, app_name, duration_seconds):
-    payloads = [
-        {"duration": duration_seconds},
-        {"total_duration": duration_seconds},
-        {"time": duration_seconds},
-        {"playtime": duration_seconds},
-        {"seconds": duration_seconds},
-    ]
-    async with aiohttp.ClientSession() as s:
-        for body in payloads:
-            async with s.post(
-                f"https://discord.com/api/v10/users/@me/applications/{app_id}/stats",
-                headers=HEADERS,
-                json=body
-            ) as r:
-                txt = await r.text()
-                print(f"  POST {app_name} | body={body} | {r.status}: {txt[:80]}")
-                if r.status in (200, 201, 204):
-                    print(f"  [!!] HIT — {body}")
-                    return True
-                await asyncio.sleep(0.3)
-    return False
-
-async def main():
-    print("[+] fetching games...")
-    games = await fetch_detectable()
-    if not games:
-        print("[-] no games fetched")
-        return
-
-    duration = HOURS * 3600
-    print(f"[+] {len(games)} games | target: {HOURS}h = {duration}s")
-
-    # probe first game to see endpoint structure
-    g = games[0]
-    print(f"\n[~] probing {g['name']} ({g['id']})")
-    await get_current_stats(g["id"])
-    await try_post_stats(g["id"], g["name"], duration)
-
-asyncio.run(main())
+asyncio.run(probe())
