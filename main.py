@@ -1,4 +1,4 @@
-# language: Python 3.10+, file: probe.py
+# language: Python 3.10+, file: exploit.py
 # pip install aiohttp
 
 import aiohttp
@@ -6,6 +6,7 @@ import asyncio
 import os
 
 TOKEN = os.environ.get("TOKEN", "YOUR_TOKEN_HERE")
+TARGET_HOURS = int(os.environ.get("HOURS", "5000"))
 
 HEADERS = {
     "Authorization": TOKEN,
@@ -13,49 +14,59 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-APP_ID   = "356875221078245376"  # minecraft
-DURATION = 18000000  # 5000 hours in seconds
+APP_ID = "356875221078245376"  # minecraft
 
-ENDPOINTS = [
-    ("GET",   "/api/v9/users/@me/activities/statistics/applications"),
-    ("POST",  "/api/v9/users/@me/activities/statistics/applications"),
-    ("POST",  f"/api/v9/users/@me/activities/statistics/applications/{APP_ID}"),
-    ("PUT",   f"/api/v9/users/@me/activities/statistics/applications/{APP_ID}"),
-    ("PATCH", f"/api/v9/users/@me/activities/statistics/applications/{APP_ID}"),
-    ("POST",  "/api/v9/users/@me/activities"),
-    ("POST",  f"/api/v9/users/@me/applications/{APP_ID}/stats"),
-    ("GET",   f"/api/v9/users/@me/applications/{APP_ID}/stats"),
-    ("POST",  f"/api/v9/applications/{APP_ID}/stats"),
-    ("POST",  "/api/v9/users/@me/game-sessions"),
-    ("POST",  f"/api/v9/users/@me/game-sessions/{APP_ID}"),
-    ("POST",  "/api/v10/users/@me/activities"),
-    ("GET",   "/api/v9/users/@me/activities/statistics/applications"),
-    ("POST",  "/api/v9/activities"),
+# try different duration sizes to find the max
+TEST_DURATIONS = [
+    3600,         # 1h
+    86400,        # 1 day
+    604800,       # 1 week
+    2592000,      # 30 days
+    31536000,     # 1 year
+    2147483647,   # int32 max
 ]
 
-BODY = {
-    "application_id": APP_ID,
-    "duration": DURATION,
-    "total_duration": DURATION,
-    "sessions": 1,
-}
+BODY_VARIANTS = [
+    lambda d: {"application_id": APP_ID, "duration": d},
+    lambda d: {"application_id": APP_ID, "duration": d, "session_id": "0"},
+    lambda d: {"application_id": APP_ID, "duration": d, "game_name": "Minecraft"},
+    lambda d: {"application_id": int(APP_ID), "duration": d},
+]
 
-async def probe():
-    base = "https://discord.com"
+async def probe_body():
     async with aiohttp.ClientSession() as s:
-        for method, path in ENDPOINTS:
-            try:
-                fn = getattr(s, method.lower())
-                kwargs = {"headers": HEADERS}
-                if method in ("POST", "PUT", "PATCH"):
-                    kwargs["json"] = BODY
-                async with fn(base + path, **kwargs) as r:
-                    txt = (await r.text())[:120]
-                    print(f"[{r.status}] {method} {path}")
-                    if r.status not in (404, 405):
-                        print(f"      >> {txt}")
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"[ERR] {method} {path} — {e}")
+        print("[~] probing body shape + max duration")
+        for body_fn in BODY_VARIANTS:
+            body = body_fn(3600)
+            async with s.post(
+                "https://discord.com/api/v9/activities",
+                headers=HEADERS, json=body
+            ) as r:
+                txt = (await r.text())[:200]
+                print(f"[{r.status}] {body} => {txt}")
+            await asyncio.sleep(1)
 
-asyncio.run(probe())
+        print("\n[~] probing max duration")
+        for d in TEST_DURATIONS:
+            body = {"application_id": APP_ID, "duration": d}
+            async with s.post(
+                "https://discord.com/api/v9/activities",
+                headers=HEADERS, json=body
+            ) as r:
+                txt = (await r.text())[:200]
+                print(f"[{r.status}] duration={d} => {txt}")
+            await asyncio.sleep(1)
+
+async def check_stats():
+    async with aiohttp.ClientSession() as s:
+        async with s.get(
+            "https://discord.com/api/v9/users/@me/activities/statistics/applications",
+            headers=HEADERS
+        ) as r:
+            print(f"\n[stats] {await r.text()}")
+
+async def main():
+    await probe_body()
+    await check_stats()
+
+asyncio.run(main())
