@@ -14,13 +14,7 @@ import websocket
 TOKEN  = os.environ.get("DISCORD_TOKEN", "")
 APP_ID = "1240700149680939090"
 
-# Discord external image proxy — wraps any public URL.
-# Format: external/<hash>/<encoded-url>
-# Hash is arbitrary for selfbot presence; Discord accepts the bare path.
-_LOGO_URL = (
-    "mp:external/gta6-logo"
-    "/https/i.imgur.com/43bdw9g.png"
-)
+_LARGE_IMAGE = "mp:external/https/cdn.discordapp.com/attachments/1570240024589377689/1572589309666529431/images.jpg"
 
 PRESENCE = {
     "op": 3,
@@ -30,17 +24,16 @@ PRESENCE = {
         "afk":    False,
         "activities": [
             {
-                "name":       "Grand Theft Auto VI",
-                "type":       1,                          # Streaming
-                "url":        "https://www.twitch.tv/playstation",
-                "details":    "Grand Theft Auto VI",
-                "state":      "PlayStation 5",
-                "timestamps": {"start": int(time.time() * 1000)},
+                "name":           "Grand Theft Auto VI",
+                "type":           0,
+                "application_id": APP_ID,
+                "details":        "Grand Theft Auto VI",
+                "state":          "PlayStation 5",
+                "timestamps":     {"start": int(time.time() * 1000)},
                 "assets": {
-                    "large_image": _LOGO_URL,
+                    "large_image": _LARGE_IMAGE,
                     "large_text":  "Grand Theft Auto VI",
                 },
-                "application_id": APP_ID,
             }
         ],
     },
@@ -77,7 +70,7 @@ def on_message(ws: websocket.WebSocketApp, raw: str) -> None:
     if msg.get("s") is not None:
         sequence = msg["s"]
 
-    if op == 10:                                          # Hello
+    if op == 10:
         heartbeat_interval = msg["d"]["heartbeat_interval"]
         threading.Thread(
             target=heartbeat_loop, args=(ws,), daemon=True
@@ -97,16 +90,16 @@ def on_message(ws: websocket.WebSocketApp, raw: str) -> None:
             },
         })
 
-    elif t == "READY":                                    # Identify ACK
+    elif t == "READY":
         u = msg["d"]["user"]
         print(f"[+] {u['username']}#{u['discriminator']}")
         send(ws, PRESENCE)
         print("[+] presence live — GTA VI / PlayStation 5")
 
-    elif op == 11:                                        # Heartbeat ACK
+    elif op == 11:
         pass
 
-    elif op in (7, 9):                                    # Reconnect / invalid session
+    elif op in (7, 9):
         print(f"[!] op {op} — reconnecting")
         ws.close()
 
@@ -118,7 +111,7 @@ def on_error(ws: websocket.WebSocketApp, error: Exception) -> None:
 def on_close(
     ws: websocket.WebSocketApp,
     code: int | None,
-    msg: str | None,
+    msg:  str | None,
 ) -> None:
     print(f"[!] closed ({code}) — retry in 5 s")
     time.sleep(5)
