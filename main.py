@@ -29,9 +29,9 @@ PRESENCE = {
                 "state":            "PlayStation 5 - Free Roam",
                 "timestamps":       {"start": int(time.time() * 1000)},
                 "assets": {
-                    "large_image":  APP_ID + "/gta6",
+                    "large_image":  "https://i.imgur.com/43bdw9g.png",
                     "large_text":   "Grand Theft Auto VI",
-                    "small_image":  APP_ID + "/ps5_controller",
+                    "small_image":  "https://i.imgur.com/43bdw9g.png",
                     "small_text":   "PlayStation 5",
                 },
             }
